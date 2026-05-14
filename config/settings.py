@@ -45,6 +45,7 @@ INSTALLED_APPS = [
     'rest_auth',
     'rest_auth.registration',
     'accounts',
+    'items',
 ]
 
 SITE_ID = 1
@@ -109,6 +110,16 @@ AUTH_PASSWORD_VALIDATORS = [
     },
 ]
 
+REST_FRAMEWORK = {
+    'DEFAULT_AUTHENTICATION_CLASSES': [
+        'rest_framework.authentication.BasicAuthentication',
+        'rest_framework.authentication.SessionAuthentication',
+        'rest_framework.authentication.TokenAuthentication',
+    ],
+    'DEFAULT_PERMISSION_CLASSES': [
+        'rest_framework.permissions.IsAuthenticatedOrReadOnly',
+    ],
+}
 
 # Internationalization
 # https://docs.djangoproject.com/en/6.0/topics/i18n/
@@ -128,3 +139,7 @@ USE_TZ = True
 STATIC_URL = "static/"
 
 EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'
+EMAIL_CHARSET = 'utf-8'
+EMAIL_USE_LOCALTIME = True
+
+LOGOUT_ON_GET = True
