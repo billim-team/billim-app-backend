@@ -14,7 +14,7 @@ class RegisterSerializer(serializers.ModelSerializer):
             username=validated_data['username'],
             email=validated_data['email'],
             password=validated_data['password'],
-            is_active=False # 인증 전에는 로그인 불가
+            is_active=True  # 인증 전에는 로그인 불가 (0516-근데 일단 개발 중에는 True로 바꿈)
         )
         return user
 
