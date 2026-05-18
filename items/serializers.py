@@ -1,7 +1,6 @@
 from rest_framework import serializers
 from .models import Item, Category, ItemImage
 
-
 # 카테고리 시리얼라이저
 class CategorySerializer(serializers.ModelSerializer):
     class Meta:
@@ -13,7 +12,7 @@ class CategorySerializer(serializers.ModelSerializer):
 class ItemImageSerializer(serializers.ModelSerializer):
     class Meta:
         model = ItemImage
-        fields = ['image_id', 'image_url', 'status_info']
+        fields = ['image_id', 'image', 'status_info']
 
 
 # 물품 시리얼라이저
