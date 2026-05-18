@@ -20,12 +20,19 @@ class ItemImageSerializer(serializers.ModelSerializer):
 class ItemSerializer(serializers.ModelSerializer):
     owner_name = serializers.ReadOnlyField(source='owner.username')
     images = ItemImageSerializer(many=True, read_only=True)
+    category_name = serializers.ReadOnlyField(source='category.category_name')
 
     class Meta:
         model = Item
         fields = [
-            'item_id', 'owner_name', 'category', 'title',
-            'description', 'price_day', 'images'
+            'item_id',
+            'owner_name',
+            'category',
+            'category_name',
+            'title',
+            'description',
+            'price_day',
+            'images'
         ]
 
 class LoginSerializer(serializers.Serializer):

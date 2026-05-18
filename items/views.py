@@ -5,7 +5,11 @@ from .serializers import ItemSerializer
 class ItemListCreateView(generics.ListCreateAPIView):
     queryset = Item.objects.all()
     serializer_class = ItemSerializer
-    permission_classes = [permissions.AllowAny]
+
+    def get_permissions(self):
+        if self.request.method == 'POST':
+            return [permissions.IsAuthenticated()]
+        return [permissions.AllowAny()]
 
     def perform_create(self, serializer):
         serializer.save(owner=self.request.user)
