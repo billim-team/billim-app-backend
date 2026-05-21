@@ -30,8 +30,10 @@ ALLOWED_HOSTS = []
 
 # Application definition
 
+# config/settings.py 의 INSTALLED_APPS 부분을 아래 내용으로 교체합니다.
+
 INSTALLED_APPS = [
-    'daphne',  # 🚨 [중요 수정] 비동기 ASGI 서버 가동을 위해 무조건 무조건 1등으로 배치해야 합니다!
+    'daphne',  
     "django.contrib.admin",
     "django.contrib.auth",
     "django.contrib.contenttypes",
@@ -41,11 +43,14 @@ INSTALLED_APPS = [
     'rest_framework',
     'rest_framework.authtoken',
     'django.contrib.sites',
+
+    'accounts',
+
     'allauth',
     'allauth.account',
     'rest_auth',
     'rest_auth.registration',
-    'accounts',
+
     'items',
     'rest_framework_simplejwt',
     'channels',  # Channels 앱 등록 유지
@@ -161,3 +166,6 @@ CHANNEL_LAYERS = {
         "BACKEND": "channels.layers.InMemoryChannelLayer",
     },
 }
+
+# 장고 프로젝트의 메인 유저 모델을 커스텀 유저 모델로 지정합니다.
+AUTH_USER_MODEL = 'accounts.User'
