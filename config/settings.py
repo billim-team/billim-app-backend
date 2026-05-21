@@ -31,6 +31,7 @@ ALLOWED_HOSTS = []
 # Application definition
 
 INSTALLED_APPS = [
+    'daphne',  # 🚨 [중요 수정] 비동기 ASGI 서버 가동을 위해 무조건 무조건 1등으로 배치해야 합니다!
     "django.contrib.admin",
     "django.contrib.auth",
     "django.contrib.contenttypes",
@@ -47,6 +48,7 @@ INSTALLED_APPS = [
     'accounts',
     'items',
     'rest_framework_simplejwt',
+    'channels',  # Channels 앱 등록 유지
 ]
 
 SITE_ID = 1
@@ -145,3 +147,17 @@ EMAIL_CHARSET = 'utf-8'
 EMAIL_USE_LOCALTIME = True
 
 LOGOUT_ON_GET = True
+
+# ==========================================
+# 장고 채널스(Channels) 실시간 비동기 설정
+# ==========================================
+
+# 1. ASGI 설정 연결 (정상 유지)
+ASGI_APPLICATION = 'config.asgi.application'
+
+# 2. 채팅방 유저 간 메시지 송수신을 위한 채널 레이어 설정
+CHANNEL_LAYERS = {
+    "default": {
+        "BACKEND": "channels.layers.InMemoryChannelLayer",
+    },
+}
