@@ -5,6 +5,12 @@ from .models import ChatRoom, ChatMessage
 
 
 class ChatConsumer(AsyncWebsocketConsumer):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # 파이참 경고 방지를 위해 인스턴스 변수 사전 정의
+        self.room_id = None
+        self.room_group_name = None
+
     async def connect(self):
         self.room_id = self.scope['url_route']['kwargs']['room_id']
         self.room_group_name = f'chat_{self.room_id}'
@@ -23,8 +29,11 @@ class ChatConsumer(AsyncWebsocketConsumer):
             self.channel_name
         )
 
-    async def receive(self, text_data):
-        """3. 브라우저에서 실시간으로 톡을 보냈을 때 감지 및 DB 저장"""
+    async def receive(self, text_data=None, bytes_data=None):
+        """3. 브라우저에서 사용자가 직접 실시간 톡을 보냈을 때 감지 및 DB 저장"""
+        if text_data is None:
+            return
+
         data = json.loads(text_data)
         message_content = data.get('message', '')
 
@@ -36,23 +45,36 @@ class ChatConsumer(AsyncWebsocketConsumer):
         user = self.scope['user']
         username = user.username if user.is_authenticated else "Anonymous"
 
-        # [핵심] 비동기 환경에서 안전하게 데이터베이스에 메시지 저장
+        # 비동기 환경에서 안전하게 데이터베이스에 메시지 저장
         if user.is_authenticated:
             await self.save_message(user, message_content)
 
-        # 같은 방에 있는 모든 유저(제공자, 대여자)에게 메시지를 브로드캐스팅(뿌리기)
+        # 같은 방에 있는 모든 유저에게 메시지 브로드캐스팅
         await self.channel_layer.group_send(
             self.room_group_name,
             {
                 'type': 'chat_message',
+                'message_type': 'TALK',  # 사용자가 직접 보낸 대화는 TALK로 지정하여 구분
                 'message': message_content,
                 'sender': username
             }
         )
 
     async def chat_message(self, event):
-        # 4. 그룹 메시지를 받아서 실제 브라우저 화면으로 밀어 넣어 주기
+        """4. 사용자의 일반 대화 메시지를 받아서 실제 브라우저 화면으로 전송"""
         await self.send(text_data=json.dumps({
+            'message_type': event['message_type'],  # TALK
+            'message': event['message'],
+            'sender': event['sender']
+        }))
+
+    # ==========================================
+    # 시스템 및 결제 관련 팝업 메시지 수신 핸들러
+    # ==========================================
+    async def popup_message(self, event):
+        """views.py에서 전송한 시스템 팝업(SYSTEM, PAY_FORM, PAY_COMPLETE)을 낚아채서 화면으로 밀어줍니다."""
+        await self.send(text_data=json.dumps({
+            'message_type': event['message_type'],  # SYSTEM / PAY_FORM / PAY_COMPLETE
             'message': event['message'],
             'sender': event['sender']
         }))
@@ -76,4 +98,4 @@ class ChatConsumer(AsyncWebsocketConsumer):
             )
         except ChatRoom.DoesNotExist:
             # 채팅방이 없을 경우 예외 처리
-            pass
+            return None

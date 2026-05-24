@@ -4,32 +4,29 @@ from rest_framework.response import Response
 from .models import ChatMessage, ChatRoom, Item, Booking
 from .serializers import BookingCreateSerializer, ItemSerializer, ChatMessageSerializer, BookingActionSerializer
 
+# 실시간 웹소켓 팝업 연동을 위한 패키지 임포트
+from channels.layers import get_channel_layer
+from asgiref.sync import async_to_sync
 
-# ==========================================
+
 # 1. 물품(Item) 관련 View
-# ==========================================
 class ItemListCreateView(generics.ListCreateAPIView):
     """물품 목록 조회 및 생성"""
     serializer_class = ItemSerializer
 
     def get_permissions(self):
-        # [POST] 물품 등록은 로그인 필수, [GET] 목록 조희는 누구나 가능
         if self.request.method == 'POST':
             return [permissions.IsAuthenticated()]
         return [permissions.AllowAny()]
 
     def get_queryset(self):
-        # 카테고리 쿼리 파라미터(?category=ID) 필터링 처리
         queryset = Item.objects.all()
         category_id = self.request.query_params.get('category', None)
-
         if category_id is not None:
             queryset = queryset.filter(category_id=category_id)
-
         return queryset
 
     def perform_create(self, serializer):
-        # 글 작성자를 현재 로그인한 유저(owner)로 저장
         serializer.save(owner=self.request.user)
 
 
@@ -46,21 +43,17 @@ class ItemUpdateDeleteView(generics.RetrieveUpdateDestroyAPIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get_queryset(self):
-        # 본인이 등록한 물품만 조회/수정/삭제 가능하도록 제한
         return Item.objects.filter(owner=self.request.user)
 
 
-# ==========================================
-# 2. 대여 예약(Booking) 관련 View
-# ==========================================
+# 2. 대여 예약(Booking) 및 채팅방 팝업 흐름 View
 class BookingCreateView(generics.CreateAPIView):
-    """대여 예약 요청 생성 및 채팅방 자동 연동"""
+    """[단계 1] 대여 예약 요청 생성 및 예약 정보 팝업 전송"""
     serializer_class = BookingCreateSerializer
     permission_classes = [permissions.IsAuthenticated]
 
     @transaction.atomic
     def perform_create(self, serializer):
-        # 1. 예약 입력 데이터 가공 및 총 대여 금액 산정
         item = serializer.validated_data['item']
         start_date = serializer.validated_data['start_date']
         end_date = serializer.validated_data['end_date']
@@ -68,17 +61,17 @@ class BookingCreateView(generics.CreateAPIView):
         days = (end_date - start_date).days + 1
         total_price = item.price_day * days
 
-        # 2. 예약 데이터 최종 저장
-        booking = serializer.save(renter=self.request.user, total_price=total_price)
+        # 1. 예약 데이터 대기 상태로 저장
+        booking = serializer.save(renter=self.request.user, total_price=total_price, status='WAITING')
 
-        # 3. 제공자와 대여자 사이의 채팅방 조회 혹은 신규 개설
+        # 2. 제공자와 대여자 사이의 채팅방 조회 혹은 신규 개설
         chat_room, created = ChatRoom.objects.get_or_create(
             item=item,
             renter=self.request.user
         )
 
-        # 4. 채팅방 내 시스템 자동 메시지 생성 및 발송
-        system_content = (
+        # 3. 대여자가 설정한 예약 정보를 담은 팝업(SYSTEM) 생성
+        popup_content = (
             f"📢 '{self.request.user.username}'님이 예약을 요청했습니다.\n"
             f"🗓️ 기간: {start_date} ~ {end_date}\n"
             f"💰 예상 금액: {total_price}원"
@@ -87,72 +80,80 @@ class BookingCreateView(generics.CreateAPIView):
             room=chat_room,
             sender=self.request.user,
             message_type='SYSTEM',
-            content=system_content,
+            content=popup_content,
             booking=booking
         )
 
-
-class ChatMessageListCreateView(generics.ListCreateAPIView):
-    """특정 채팅방(room_id)의 메시지 목록 조회 및 메시지 전송"""
-    serializer_class = ChatMessageSerializer
-    permission_classes = [permissions.IsAuthenticated]
-
-    def get_queryset(self):
-        # URL 주소에서 room_id를 추출하여 해당 방의 메시지만 시간순으로 정렬
-        return ChatMessage.objects.filter(room_id=self.kwargs['room_id']).order_by('timestamp')
-
-    def perform_create(self, serializer):
-        # 메시지 발신자를 현재 로그인한 유저로 지정
-        serializer.save(sender=self.request.user)
+        # [실시간 알림] 웹소켓 채널로 예약 요청 팝업 브로드캐스팅
+        channel_layer = get_channel_layer()
+        async_to_sync(channel_layer.group_send)(
+            f'chat_{chat_room.room_id}',  # consumers.py와 매핑되는 방 그룹 이름
+            {
+                'type': 'popup_message',  # consumers.py에 작성해둔 popup_message 함수 호출
+                'message_type': 'SYSTEM',
+                'message': popup_content,
+                'sender': self.request.user.username
+            }
+        )
 
 
 class BookingActionView(generics.GenericAPIView):
-    """제공자가 예약을 승인(APPROVE)하거나 거절(REJECT)하는 액션 API"""
+    """[단계 2] 제공자의 예약 수락(PAY_FORM 팝업) 또는 거절(SYSTEM 사유 메시지) 처리"""
     serializer_class = BookingActionSerializer
     permission_classes = [permissions.IsAuthenticated]
 
     @transaction.atomic
     def post(self, request, booking_id, *args, **kwargs):
-        # 1. 예약 객체 가져오기
         try:
             booking = Booking.objects.get(pk=booking_id)
         except Booking.DoesNotExist:
             return Response({"error": "존재하지 않는 예약 요청입니다."}, status=status.HTTP_404_NOT_FOUND)
 
-        # 2. 권한 검증: 이 물품의 제공자(owner)만 승인/거절을 할 수 있어야 합니다.
         if booking.item.owner != request.user:
             return Response({"error": "이 예약 요청을 처리할 권한이 없습니다 (물품 제공자 전용)."}, status=status.HTTP_403_FORBIDDEN)
 
-        # 3. 데이터 검증 (APPROVE 인지 REJECT 인지 구분)
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         action = serializer.validated_data['action']
         reject_reason = serializer.validated_data.get('reject_reason', '')
 
-        # 4. 연동된 채팅방 찾아오기 (없으면 새로 개설)
         chat_room, _ = ChatRoom.objects.get_or_create(item=booking.item, renter=booking.renter)
 
-        # 5. 액션별 분기 처리
+        # 실시간 선로 라이브 연결
+        channel_layer = get_channel_layer()
+
+        # Case A: 제공자가 예약을 수락했을 경우
         if action == 'APPROVE':
             booking.status = 'APPROVED'
             booking.save()
 
-            # 채팅방에 결제를 요구하는 폼과 자동 메시지 전송 기획 구현
+            pay_content = f"💳 제공자가 대여 요청을 승인했습니다! 아래 결제하기 버튼을 눌러 결제를 진행해 주세요.\n결제 금액: {booking.total_price}원"
             ChatMessage.objects.create(
                 room=chat_room,
                 sender=request.user,
-                message_type='PAY_FORM',  # 결제 폼 타입으로 지정하여 프론트가 버튼을 띄우게 함
-                content=f"💳 제공자가 대여 요청을 승인했습니다! 아래 결제하기 버튼을 눌러 결제를 진행해 주세요.\n결제 금액: {booking.total_price}원",
+                message_type='PAY_FORM',
+                content=pay_content,
                 booking=booking
             )
-            return Response({"message": "예약을 승인하였고 결제 폼을 전송했습니다.", "status": booking.status})
 
+            # [실시간 알림] 웹소켓 채널로 결제 폼 팝업 브로드캐스팅
+            async_to_sync(channel_layer.group_send)(
+                f'chat_{chat_room.room_id}',
+                {
+                    'type': 'popup_message',
+                    'message_type': 'PAY_FORM',
+                    'message': pay_content,
+                    'sender': request.user.username
+                }
+            )
+            return Response({"message": "예약을 승인하였고 결제 폼 팝업을 전송했습니다.", "status": booking.status})
+
+        # Case B: 제공자가 예약을 거절했을 경우
         elif action == 'REJECT':
             booking.status = 'REJECTED'
             booking.reject_reason = reject_reason
             booking.save()
 
-            # 채팅방에 거절 자동 메시지 전송
             reject_msg = "❌ 제공자의 개인 사정으로 인해 대여 요청이 거절되었습니다."
             if reject_reason:
                 reject_msg += f"\n💬 거절 사유: {reject_reason}"
@@ -164,4 +165,72 @@ class BookingActionView(generics.GenericAPIView):
                 content=reject_msg,
                 booking=booking
             )
+
+            # [실시간 알림] 웹소켓 채널로 거절 안내 사유 팝업 브로드캐스팅
+            async_to_sync(channel_layer.group_send)(
+                f'chat_{chat_room.room_id}',
+                {
+                    'type': 'popup_message',
+                    'message_type': 'SYSTEM',
+                    'message': reject_msg,
+                    'sender': request.user.username
+                }
+            )
             return Response({"message": "예약을 거절하였고 안내 메시지를 전송했습니다.", "status": booking.status})
+
+
+class PaymentCompleteView(generics.GenericAPIView):
+    """[단계 3] 대여자가 결제를 마쳤을 때 제공자를 향해 결제 완료 팝업(PAY_COMPLETE)을 전송하는 API"""
+    serializer_class = BookingActionSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    @transaction.atomic
+    def post(self, request, booking_id, *args, **kwargs):
+        try:
+            booking = Booking.objects.get(pk=booking_id)
+        except Booking.DoesNotExist:
+            return Response({"error": "존재하지 않는 예약 내역입니다."}, status=status.HTTP_404_NOT_FOUND)
+
+        if booking.renter != request.user:
+            return Response({"error": "이 결제를 완료 처리할 권한이 없습니다."}, status=status.HTTP_403_FORBIDDEN)
+
+        booking.status = 'PAID'
+        booking.save()
+
+        chat_room = ChatRoom.objects.get(item=booking.item, renter=booking.renter)
+
+        complete_content = f"🎉 대여자 '{request.user.username}'님이 결제를 완료했습니다!\n물품을 안전하게 전달할 준비를 해주세요."
+        ChatMessage.objects.create(
+            room=chat_room,
+            sender=request.user,
+            message_type='PAY_COMPLETE',
+            content=complete_content,
+            booking=booking
+        )
+
+        # [실시간 알림] 웹소켓 채널로 최종 결제 완료 안내 팝업 브로드캐스팅
+        channel_layer = get_channel_layer()
+        async_to_sync(channel_layer.group_send)(
+            f'chat_{chat_room.room_id}',
+            {
+                'type': 'popup_message',
+                'message_type': 'PAY_COMPLETE',
+                'message': complete_content,
+                'sender': request.user.username
+            }
+        )
+
+        return Response({"message": "결제 처리가 완료되었으며, 제공자용 알림 팝업을 전송했습니다.", "status": booking.status})
+
+
+# 3. 순수 대화(Chat) 관련 View
+class ChatMessageListCreateView(generics.ListCreateAPIView):
+    """특정 채팅방(room_id)의 메시지 목록 조회 및 '사용자가 직접 보낸 것만' 전송"""
+    serializer_class = ChatMessageSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        return ChatMessage.objects.filter(room_id=self.kwargs['room_id']).order_by('timestamp')
+
+    def perform_create(self, serializer):
+        serializer.save(sender=self.request.user, message_type='TALK')
