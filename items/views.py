@@ -1,7 +1,7 @@
 from django.db import transaction
 from rest_framework import generics, permissions, status
 from rest_framework.response import Response
-from .models import ChatMessage, ChatRoom, Item, Booking
+from .models import ChatMessage, ChatRoom, Item, Rental
 from .serializers import BookingCreateSerializer, ItemSerializer, ChatMessageSerializer, BookingActionSerializer
 
 # 실시간 웹소켓 팝업 연동을 위한 패키지 임포트
@@ -46,8 +46,8 @@ class ItemUpdateDeleteView(generics.RetrieveUpdateDestroyAPIView):
         return Item.objects.filter(owner=self.request.user)
 
 
-# 2. 대여 예약(Booking) 및 채팅방 팝업 흐름 View
-class BookingCreateView(generics.CreateAPIView):
+# 2. 대여 예약(Rental) 및 채팅방 팝업 흐름 View
+class RentalCreateView(generics.CreateAPIView):
     """[단계 1] 대여 예약 요청 생성 및 예약 정보 팝업 전송"""
     serializer_class = BookingCreateSerializer
     permission_classes = [permissions.IsAuthenticated]
@@ -61,8 +61,8 @@ class BookingCreateView(generics.CreateAPIView):
         days = (end_date - start_date).days + 1
         total_price = item.price_day * days
 
-        # 1. 예약 데이터 대기 상태로 저장
-        booking = serializer.save(renter=self.request.user, total_price=total_price, status='WAITING')
+        # 1. 예약 데이터 대기 상태로 저장 (Rental 모델로 저장)
+        rental = serializer.save(renter=self.request.user, total_price=total_price, status='WAITING')
 
         # 2. 제공자와 대여자 사이의 채팅방 조회 혹은 신규 개설
         chat_room, created = ChatRoom.objects.get_or_create(
@@ -81,7 +81,7 @@ class BookingCreateView(generics.CreateAPIView):
             sender=self.request.user,
             message_type='SYSTEM',
             content=popup_content,
-            booking=booking
+            rental=rental
         )
 
         # [실시간 알림] 웹소켓 채널로 예약 요청 팝업 브로드캐스팅
@@ -97,19 +97,19 @@ class BookingCreateView(generics.CreateAPIView):
         )
 
 
-class BookingActionView(generics.GenericAPIView):
+class RentalActionView(generics.GenericAPIView):
     """[단계 2] 제공자의 예약 수락(PAY_FORM 팝업) 또는 거절(SYSTEM 사유 메시지) 처리"""
     serializer_class = BookingActionSerializer
     permission_classes = [permissions.IsAuthenticated]
 
     @transaction.atomic
-    def post(self, request, booking_id, *args, **kwargs):
+    def post(self, request, rental_id, *args, **kwargs):
         try:
-            booking = Booking.objects.get(pk=booking_id)
-        except Booking.DoesNotExist:
+            rental = Rental.objects.get(pk=rental_id)  #Rental 조회로 변경
+        except Rental.DoesNotExist:
             return Response({"error": "존재하지 않는 예약 요청입니다."}, status=status.HTTP_404_NOT_FOUND)
 
-        if booking.item.owner != request.user:
+        if rental.item.owner != request.user:
             return Response({"error": "이 예약 요청을 처리할 권한이 없습니다 (물품 제공자 전용)."}, status=status.HTTP_403_FORBIDDEN)
 
         serializer = self.get_serializer(data=request.data)
@@ -117,23 +117,23 @@ class BookingActionView(generics.GenericAPIView):
         action = serializer.validated_data['action']
         reject_reason = serializer.validated_data.get('reject_reason', '')
 
-        chat_room, _ = ChatRoom.objects.get_or_create(item=booking.item, renter=booking.renter)
+        chat_room, _ = ChatRoom.objects.get_or_create(item=rental.item, renter=rental.renter)
 
         # 실시간 선로 라이브 연결
         channel_layer = get_channel_layer()
 
         # Case A: 제공자가 예약을 수락했을 경우
         if action == 'APPROVE':
-            booking.status = 'APPROVED'
-            booking.save()
+            rental.status = 'APPROVED'
+            rental.save()
 
-            pay_content = f"💳 제공자가 대여 요청을 승인했습니다! 아래 결제하기 버튼을 눌러 결제를 진행해 주세요.\n결제 금액: {booking.total_price}원"
+            pay_content = f"💳 제공자가 대여 요청을 승인했습니다! 아래 결제하기 버튼을 눌러 결제를 진행해 주세요.\n결제 금액: {rental.total_price}원"
             ChatMessage.objects.create(
                 room=chat_room,
                 sender=request.user,
                 message_type='PAY_FORM',
                 content=pay_content,
-                booking=booking
+                rental=rental  #rental 매핑
             )
 
             # [실시간 알림] 웹소켓 채널로 결제 폼 팝업 브로드캐스팅
@@ -146,13 +146,13 @@ class BookingActionView(generics.GenericAPIView):
                     'sender': request.user.username
                 }
             )
-            return Response({"message": "예약을 승인하였고 결제 폼 팝업을 전송했습니다.", "status": booking.status})
+            return Response({"message": "예약을 승인하였고 결제 폼 팝업을 전송했습니다.", "status": rental.status})
 
         # Case B: 제공자가 예약을 거절했을 경우
         elif action == 'REJECT':
-            booking.status = 'REJECTED'
-            booking.reject_reason = reject_reason
-            booking.save()
+            rental.status = 'REJECTED'
+            rental.reject_reason = reject_reason
+            rental.save()
 
             reject_msg = "❌ 제공자의 개인 사정으로 인해 대여 요청이 거절되었습니다."
             if reject_reason:
@@ -163,7 +163,7 @@ class BookingActionView(generics.GenericAPIView):
                 sender=request.user,
                 message_type='SYSTEM',
                 content=reject_msg,
-                booking=booking
+                rental=rental  #rental 매핑
             )
 
             # [실시간 알림] 웹소켓 채널로 거절 안내 사유 팝업 브로드캐스팅
@@ -176,7 +176,7 @@ class BookingActionView(generics.GenericAPIView):
                     'sender': request.user.username
                 }
             )
-            return Response({"message": "예약을 거절하였고 안내 메시지를 전송했습니다.", "status": booking.status})
+            return Response({"message": "예약을 거절하였고 안내 메시지를 전송했습니다.", "status": rental.status})
 
 
 class PaymentCompleteView(generics.GenericAPIView):
@@ -185,19 +185,19 @@ class PaymentCompleteView(generics.GenericAPIView):
     permission_classes = [permissions.IsAuthenticated]
 
     @transaction.atomic
-    def post(self, request, booking_id, *args, **kwargs):
+    def post(self, request, rental_id, *args, **kwargs):
         try:
-            booking = Booking.objects.get(pk=booking_id)
-        except Booking.DoesNotExist:
+            rental = Rental.objects.get(pk=rental_id)  # Rental 조회로 변경
+        except Rental.DoesNotExist:
             return Response({"error": "존재하지 않는 예약 내역입니다."}, status=status.HTTP_404_NOT_FOUND)
 
-        if booking.renter != request.user:
+        if rental.renter != request.user:
             return Response({"error": "이 결제를 완료 처리할 권한이 없습니다."}, status=status.HTTP_403_FORBIDDEN)
 
-        booking.status = 'PAID'
-        booking.save()
+        rental.status = 'PAID'
+        rental.save()
 
-        chat_room = ChatRoom.objects.get(item=booking.item, renter=booking.renter)
+        chat_room = ChatRoom.objects.get(item=rental.item, renter=rental.renter)
 
         complete_content = f"🎉 대여자 '{request.user.username}'님이 결제를 완료했습니다!\n물품을 안전하게 전달할 준비를 해주세요."
         ChatMessage.objects.create(
@@ -205,7 +205,7 @@ class PaymentCompleteView(generics.GenericAPIView):
             sender=request.user,
             message_type='PAY_COMPLETE',
             content=complete_content,
-            booking=booking
+            rental=rental  # rental 매핑
         )
 
         # [실시간 알림] 웹소켓 채널로 최종 결제 완료 안내 팝업 브로드캐스팅
@@ -220,7 +220,7 @@ class PaymentCompleteView(generics.GenericAPIView):
             }
         )
 
-        return Response({"message": "결제 처리가 완료되었으며, 제공자용 알림 팝업을 전송했습니다.", "status": booking.status})
+        return Response({"message": "결제 처리가 완료되었으며, 제공자용 알림 팝업을 전송했습니다.", "status": rental.status})
 
 
 # 3. 순수 대화(Chat) 관련 View
