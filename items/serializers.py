@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Item, Category, ItemFile, Rental, ChatRoom, ChatMessage  # ⭐️ ItemImage -> ItemFile, Booking -> Rental 변경
+from .models import Item, Category, ItemFile, Rental, ChatRoom, ChatMessage, Review
 
 
 # 1. 카테고리 시리얼라이저
@@ -60,3 +60,11 @@ class ChatRoomSerializer(serializers.ModelSerializer):
     class Meta:
         model = ChatRoom
         fields = ['room_id', 'item', 'item_title', 'renter', 'renter_username', 'created_at']
+
+class ReviewSerializer(serializers.ModelSerializer):
+    writer_name = serializers.ReadOnlyField(source='writer.username')
+
+    class Meta:
+        model = Review
+        fields = ['id', 'rental', 'writer', 'writer_name', 'rating', 'content', 'created_at']
+        read_only_fields = ['writer']
