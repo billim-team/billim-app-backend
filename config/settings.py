@@ -25,7 +25,7 @@ SECRET_KEY = "django-insecure-f+85cct^#oyuxrr^pn(ktkc+5$!a(#^3$1x7-0m%yt4k2u07@s
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = ['*']
 
 
 # Application definition
@@ -53,12 +53,14 @@ INSTALLED_APPS = [
 
     'items',
     'rest_framework_simplejwt',
-    'channels',  # Channels 앱 등록 유지
+    'channels',
+    'corsheaders',
 ]
 
 SITE_ID = 1
 
 MIDDLEWARE = [
+    'corsheaders.middleware.CorsMiddleware',
     "django.middleware.security.SecurityMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
@@ -173,3 +175,5 @@ CHANNEL_LAYERS = {
 
 # 장고 프로젝트의 메인 유저 모델을 커스텀 유저 모델로 지정합니다.
 AUTH_USER_MODEL = 'accounts.User'
+
+CORS_ALLOW_ALL_ORIGINS = True
