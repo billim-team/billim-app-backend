@@ -1,10 +1,10 @@
-from rest_framework import serializers
 from django.contrib.auth import get_user_model, authenticate
-from items.models import Category  # 관심 카테고리 연동을 위해 임포트
+from rest_framework import serializers
+from items.models import Category
 
 User = get_user_model()
 
-
+# 회원가입 시 유저 데이터를 검증하고 생성하는 로직
 class RegisterSerializer(serializers.ModelSerializer):
     password = serializers.CharField(write_only=True)
 
@@ -18,14 +18,12 @@ class RegisterSerializer(serializers.ModelSerializer):
             username=validated_data['username'],
             email=validated_data['email'],
             password=validated_data['password'],
-            is_active=True  # 인증 전에는 로그인 불가 (0516-근데 일단 개발 중에는 True로 바꿈)
+            is_active=True  # 인증 전에는 로그인 불가 (개발 편의를 위해 True 유지)
         )
         return user
 
 
-# ==========================================
 # 로그인 시 유저 객체를 검증하고 뷰로 넘겨주는 로직
-# ==========================================
 class LoginSerializer(serializers.Serializer):
     username = serializers.CharField()
     password = serializers.CharField(write_only=True)
@@ -49,9 +47,8 @@ class LoginSerializer(serializers.Serializer):
         return attrs
 
 
-# ==========================================
-# 🚨 [수정 완료] DRF 웹 화면 전용 체크박스 스타일 적용
-# ==========================================
+# 내 프로필 정보 조회 및 관심사 수정 시리얼라이저
+
 class UserProfileSerializer(serializers.ModelSerializer):
     """MY -> 설정 화면에서 내 프로필 정보를 조회하고 관심사를 수정할 때 사용하는 시리얼라이저"""
 
@@ -60,7 +57,7 @@ class UserProfileSerializer(serializers.ModelSerializer):
         many=True,
         queryset=Category.objects.all(),
         required=False,
-        style={'base_template': 'checkbox_multiple.html'}  # 🚨 이 스타일 옵션이 추가되었습니다!
+        style={'base_template': 'checkbox_multiple.html'}
     )
 
     class Meta:
@@ -76,7 +73,7 @@ class UserProfileSerializer(serializers.ModelSerializer):
         for attr, value in validated_data.items():
             setattr(instance, attr, value)
 
-        # 3. [핵심] ManyToManyField 데이터를 .set() 문법을 통해 다중 중복 저장합니다.
+        # 3. ManyToManyField 데이터를 .set() 문법을 통해 다중 중복 저장합니다.
         if interests_data is not None:
             instance.interests.set(interests_data)
 

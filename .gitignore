@@ -1,7 +1,9 @@
-*.pyc
-__pycache__/
-myenv/
+.venv/
 venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.Ideas/
 .idea/
 .vscode/
 db.sqlite3

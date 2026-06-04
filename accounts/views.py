@@ -116,24 +116,24 @@ def logout_view(request):
     return redirect('/accounts/login/')
 
 
+# 내 정보 조회 및 관심사 온보딩 싱크 조율
 class MySettingsView(generics.RetrieveUpdateAPIView):
+    """현재 로그인한 사용자의 프로필 조회(GET) 및 관심사 설정(PUT/PATCH) API"""
     serializer_class = UserProfileSerializer
     permission_classes = [permissions.IsAuthenticated]
 
     def get_object(self):
+        # 헤더로 들어온 토큰의 진짜 주인을 찾아 반환합니다.
         return self.request.user
 
     def perform_update(self, serializer):
-        instance = serializer.save()
-        if hasattr(instance, 'is_interests_set') and not instance.is_interests_set:
-            instance.is_interests_set = True
-            instance.save()
+        # 💡 serializers.py의 고도화된 update() 내부 관심사 카운팅 검증 시스템이 정상 작동하도록 위임합니다.
+        serializer.save()
 
 
 class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
     def validate(self, attrs):
         data = super().validate(attrs)
-        # 🚨 이 줄 바로 위에 정밀 타격 주석을 명시하여 타입 에러를 100% 강제 진정시킵니다.
         # noinspection PyTypeChecker
         data['is_interests_set'] = bool(getattr(self.user, 'is_interests_set', False))
         return data

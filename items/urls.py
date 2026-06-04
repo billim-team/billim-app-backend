@@ -1,5 +1,6 @@
 from django.urls import path
 from .views import (
+    CategoryListView,
     ItemListCreateView,
     ItemDetailView,
     ItemUpdateDeleteView,
@@ -33,4 +34,6 @@ urlpatterns = [
 
     # 4. 채팅 메시지 관련 API 주소
     path('chats/<int:room_id>/', ChatMessageListCreateView.as_view(), name='chat-message-list-create'),
+
+    path('categories/', CategoryListView.as_view(), name='category-list'),
 ]
