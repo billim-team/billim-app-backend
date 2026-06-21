@@ -1,29 +1,25 @@
 from django.db import transaction
 from rest_framework import generics, permissions, status
 from rest_framework.response import Response
-# Category 모델을 임포트 목록에 추가했습니다.
 from .models import ChatMessage, ChatRoom, Item, Rental, ItemFile, Review, Category
 from .serializers import (
     BookingCreateSerializer, ItemSerializer, ChatMessageSerializer,
     BookingActionSerializer, ReviewSerializer, CategorySerializer  # CategorySerializer 추가
 )
 
-# 실시간 웹소켓 팝업 연동을 위한 패키지 임포트
 from channels.layers import get_channel_layer
 from asgiref.sync import async_to_sync
 
 
-# 0. 카테고리(Category) 관련 View
+# 카테고리 관련 View
 class CategoryListView(generics.ListAPIView):
-    """카테고리 전체 목록 조회 (로그인 안 해도 접근 가능)"""
     queryset = Category.objects.all()
     serializer_class = CategorySerializer
     permission_classes = [permissions.AllowAny]
 
 
-# 1. 물품(Item) 관련 View
+# 1. 물품 관련 View
 class ItemListCreateView(generics.ListCreateAPIView):
-    """물품 목록 조회 및 생성"""
     serializer_class = ItemSerializer
 
     def get_permissions(self):
